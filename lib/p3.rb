@@ -7,7 +7,7 @@ require 'socket'
 class P3
 
   P3_START='~'.ord
-  P3_END='~'.ord
+  P3_END='^'.ord
   P3_ESC='#'.ord
 
   def initialize(hash={},&block)
@@ -34,7 +34,7 @@ class P3
     i+=4
     ip=sprintf "%d.%d.%d.%d",buf[i+3],buf[i+2],buf[i+1],buf[i]
     i+=4
-    port=buf[i]*0x100+buf[i+1]
+    port=buf[i+1]*0x100+buf[i]
     i+=2
     len=buf[i]
     i+=1
@@ -67,8 +67,8 @@ class P3
       buf<<ips[2].to_i
       buf<<ips[1].to_i
       buf<<ips[0].to_i
-      buf<<pac[:port]/0x100
       buf<<(pac[:port]&0xff)
+      buf<<pac[:port]/0x100
       buf<<pac[:data].size
       buf+=pac[:data].unpack("C*")
       check=0
@@ -77,8 +77,8 @@ class P3
       end
       buf<<check
       #pp buf
-      #pp "~#{buf.pack("C*")}~"
-      return "~#{buf.pack("C*")}~"
+      pp "#{P3_START.chr}#{buf.pack("C*")}#{P3_END.chr}"
+      return "#{P3_START.chr}#{buf.pack("C*")}#{P3_END.chr}"
     rescue => e
       p e
       p e.backtrace
@@ -90,11 +90,26 @@ class P3
     #puts "packet in #{buf}"
     pac= unpack buf
     return if not pac
-    pp pac
-    pp @clients
-    if pac[:proto]=="U"
+    #pp pac
+    #pp @clients
+    if pac[:proto]=="P" #local keep-alive-ping
+      puts "yeah -- we got ping -- let's pong"
+      pac={
+        proto:'P',
+        mac: "00:00",
+        ip: "0.0.0.0",
+        port:0,
+        data:"pong",
+      }
+      #pp pac
+      # received return packet from server!
+      if @block
+        @block.call pac
+      end
+
+    elsif pac[:proto]=="U" #udp to internet
       if not @clients[pac[:mac]]
-        puts "new client #{pac[:mac]}"
+        #puts "new client #{pac[:mac]}"
         @clients[pac[:mac]]={socket: UDPSocket.new,created:Time.now,count_r:0, count_s:0}
         @clients[pac[:mac]][:thread]=Thread.new(pac[:mac]) do |my_mac|
           loop do
@@ -125,14 +140,15 @@ class P3
             end
           end
         end
-        pp @clients
+        #pp @clients
       end
       @clients[pac[:mac]][:socket].send(pac[:data].pack("C*"), 0, pac[:ip], pac[:port])
       _,port,_,_ = @clients[pac[:mac]][:socket].addr
       @clients[pac[:mac]][:gw_port]=port
       @clients[pac[:mac]][:last_s]=Time.now
       @clients[pac[:mac]][:count_s]+=1
-      pp @clients
+      puts "sent #{pac}\r\n"
+      #pp @clients
     end
   end
 
@@ -168,7 +184,7 @@ class P3
           @p3esc=false
         elsif ch==P3_ESC
           @p3esc=true
-          return
+          return true
         end
         @p3buf<<ch
       end
